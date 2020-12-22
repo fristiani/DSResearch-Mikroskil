@@ -1,0 +1,1144 @@
+---
+title: "Untitled"
+author: "Fristiani_Vince"
+date: "12/22/2020"
+output: html_document
+---
+```{r setup, include=FALSE}
+# setup chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+options(scipen = 9999)
+```
+
+#clear variabel
+```{r}
+rm(list=ls())
+```
+# Packages
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(timetk)   
+library(lubridate)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(glmnet)
+library(prophet)
+library(tseries)
+```
+# Data Preparation
+```{r}
+pmb <- read.csv ("C:/Users/FRISTIANI THERESIA/Downloads/pmbmikroskil.csv")
+pmb <- pmb[,1:11] #menampilkan indek kolom ke 2 sampai dengan 8
+#fungsi head digunakan utk menampilkan 6 data teratas
+head(pmb)
+```
+```{r}
+#fungsi tail digunakan utk menampilkan 6 data terbawah
+tail(pmb)
+```
+```{r}
+#fungsi untuk melihat summary dari data
+summary(pmb)
+```
+# Menghapus nilai data NA
+```{r}
+pmbclean <- na.omit(pmb)
+summary(pmbclean)
+```
+```{r}
+#fungsi ncol ini digunakan untuk melihat jumlah kolom data
+ncol(pmbclean)
+```
+```{r}
+#fungsi nrow ini digunakan untuk melihat jumlah baris data
+nrow(pmbclean)
+```
+```{r}
+#fungsi untuk menampilkan kolom tertentu dalam beberapa kolom data
+pmbclean %>% #ctrl + shift + m (piping/fungsi Pipe)
+  select(3) %>%
+  head()
+```
+```{r}
+#fungsi untuk menampilkan type data dari kolom atau variabel
+glimpse(pmbclean)
+```
+# Karena Tanggal.Daftar dalam bentuk type data karakter, maka kita harus rubah kedalam bentuk type data (date) atau tanggal, dengan format dd.mm.yyy
+```{r}
+pmbnew <- pmbclean %>% 
+  mutate(Tanggal.Daftar = dmy (Tanggal.Daftar)) %>% 
+  arrange(Tanggal.Daftar)
+head(pmbnew)
+```
+```{r}
+glimpse(pmbnew)
+```
+```{r}
+#merubah type data jumlah.mhs menjadi double
+pmbnew$Jumlah.Mhs <- as.numeric(as.factor(pmbnew$Jumlah.Mhs))
+glimpse(pmbnew)
+```
+# Pengujian stationer
+```{r}
+adf.test(pmbnew$Jumlah.Mhs)
+```
+```{r}
+theme_ts <- theme(panel.border = element_rect(fill = NA, 
+                                              colour = "grey10"),
+                  panel.background = element_blank(),
+                  panel.grid.minor = element_line(colour = "grey85"),
+                  panel.grid.major = element_line(colour = "grey85"),
+                  panel.grid.major.x = element_line(colour = "grey85"),
+                  axis.text = element_text(size = 13, face = "bold"),
+                  axis.title = element_text(size = 15, face = "bold"),
+                  plot.title = element_text(size = 16, face = "bold"),
+                  strip.text = element_text(size = 16, face = "bold"),
+                  strip.background = element_rect(colour = "black"),
+                  legend.text = element_text(size = 15),
+                  legend.title = element_text(size = 16, face = "bold"),
+                  legend.background = element_rect(fill = "white"),
+                  legend.key = element_rect(fill = "white"))
+```
+# Untuk menampilkan Tanggal.Daftar dan Jumlah.Mhs
+```{r}
+pmb1 <- pmbnew %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    Jumlah.Mhs = (Jumlah.Mhs)
+  )
+pmb1
+```
+# Visualisasi Exploratory Analysis Keseluruhan
+```{r}
+pmbnew <- pmbnew[order(pmb$Tanggal.Daftar), ]
+prodi <- c("TEKNIK INFORMATIKA (S-1)","SISTEM INFORMASI (S-1)", "MANAJEMEN (S-1)", "AKUNTANSI (S-1)")
+prodi <-  subset(pmbnew, Program.Studi %in% prodi)
+ggplot (data=prodi, mapping=aes(x=Tanggal.Daftar, y=(Jumlah.Mhs), col=Program.Studi)) +
+geom_point () +
+  geom_jitter()
+  labs(x="Tahun",
+      y="Jumlah Mahasiswa",
+      title="Jumlah Mahasiswa") +
+theme_minimal()
+```
+# A. Kita ingin melakukan filter data dengan kondisi program studi TEKNIK INFORMATIKA  dan SISTEM INFORMASI (STMIK)
+```{r}
+pmbstmik <- pmbnew %>% 
+  filter(Program.Studi == "TEKNIK INFORMATIKA (S-1)" | Program.Studi == "SISTEM INFORMASI (S-1)")
+glimpse(pmbstmik)
+  
+```
+# Visualisasi data STMIK
+```{r}
+pmbstmik <- pmbstmik[order(pmbnew$Tanggal.Daftar),]
+prodi <- c("TEKNIK INFORMATIKA (S-1)","SISTEM INFORMASI (S-1)")
+prodi <- subset(pmbstmik, Program.Studi %in% prodi)
+ggplot (data=prodi, mapping=aes(x=Tanggal.Daftar, y=(Jumlah.Mhs), col=Program.Studi)) + 
+  #geom_line(aes(color  = Program.Studi)) +
+  geom_point(aes(color = Program.Studi)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STMIK") +
+  theme_minimal()
+```
+# Jumlah mahasiswa yang daftar pertahun di STMIK
+```{r}
+pmbstmik <- na.omit(pmbstmik)
+summary(pmbstmik)
+```
+```{r}
+pmbstmikyear <- pmbstmik %>% 
+  mutate(year = floor_date(Tanggal.Daftar, unit = "years")) %>%  
+  group_by(year) %>% 
+  summarise( 
+    daftar_year = sum(Jumlah.Mhs) 
+  ) 
+```
+```{r} 
+pmbstmikyear
+```
+# Visualisasi data STMIK pertahun
+```{r}
+ggplot (data=pmbstmikyear, mapping=aes(x=year, y=(daftar_year), col=year)) + 
+  geom_line(aes(color  = year)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STMIK") +
+  theme_minimal()
+```
+# Jumlah mahasiswa yang daftar perbulan di STMIK
+```{r}
+jumdafstmik_bln <- pmbstmik %>%
+  mutate(bulan = floor_date(Tanggal.Daftar, unit = "month")) %>%
+  group_by(bulan)%>%
+  summarise(
+    daftar_bulan = sum(Jumlah.Mhs)
+  )
+jumdafstmik_bln
+```
+# Visualisasi data STMIK perbulan
+```{r}
+ggplot (data=jumdafstmik_bln, mapping=aes(x=bulan, y=(daftar_bulan), col=bulan)) + 
+  geom_line(aes(color  = bulan)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STMIK") +
+  theme_minimal()
+```
+# Menghitung jumlah daftar berdasarkan asal sekolah dan nama kota
+```{r}
+countsklh_stmik <- group_by (pmbstmik, Nama.Sekolah, Nama.Kota)
+count(countsklh_stmik)
+```
+# 10 besar asal sekolah yg mendaftar paling banyak dari tahun 2010-2019 - STMIK
+```{r}
+pmbstmik %>% 
+  group_by(Nama.Kota, Nama.Sekolah) %>% 
+  count() %>%
+  arrange(-n)
+```
+# Untuk sekolah paling banyak mendaftar SMA S SUTOMO 1 
+```{r}
+sklh_stmik1 <- pmbstmik %>% 
+  filter(Nama.Sekolah == "SMA S SUTOMO 1")
+glimpse(sklh_stmik1)
+```
+```{r}
+sklh_sutomo <- sklh_stmik1 %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+sklh_sutomo
+```
+# Untuk melihat asal sekolah yg mendaftar masuk 10 besar
+```{r}
+sklh_stmik10 <- pmbstmik %>% 
+  filter(Nama.Sekolah == "SMA S SUTOMO 1"|Nama.Sekolah=="SMA METHODIST BINJAI"|Nama.Sekolah=="SMA S METHODIST 2"|Nama.Sekolah=="SMK TELKOM SANDHY PUTRA MEDAN"|Nama.Sekolah=="SMA S SUTOMO 2"|Nama.Sekolah=="SMK S TRITECH INFORMATIKA"|Nama.Sekolah== "SMA S WIYATA DHARMA"|Nama.Sekolah== "SMA S METHODIST 3"|Nama.Sekolah=="SMA SISINGAMANGARAJA"|Nama.Sekolah== "SMA AHMAD YANI")
+glimpse(sklh_stmik10)
+```
+```{r}
+sklh_stmik_10 <- sklh_stmik10 %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+sklh_stmik_10
+```
+# B. Kita ingin melakukan filter data dengan kondisi program studi MANAJEMEN dan AKUNTANSI (STIE)
+```{r}
+pmbstie <- pmbnew %>% 
+  filter (Program.Studi == "MANAJEMEN (S-1)" | Program.Studi == "AKUNTANSI (S-1)")
+glimpse(pmbstie)
+```
+# Visualisasi data STIE
+```{r}
+pmbstie <- pmbstie[order(pmbnew$Tanggal.Daftar),]
+prodi <- c("MANAJEMEN (S-1)", "AKUNTANSI (S-1)")
+prodi <- subset(pmbstie, Program.Studi %in% prodi)
+ggplot (data=prodi, mapping=aes(x=Tanggal.Daftar, y=(Jumlah.Mhs), col=Program.Studi)) + 
+  #geom_line(aes(color  = Program.Studi)) +
+  geom_point(aes(color = Program.Studi)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STIE") +
+  theme_minimal()
+```
+# Jumlah mahasiswa yang daftar pertahun di STIE
+```{r}
+pmbstie <- na.omit(pmbstie)
+summary(pmbstie)
+```
+```{r}
+pmbstieyear <- pmbstie %>% 
+  mutate(year = floor_date(Tanggal.Daftar, unit = "years")) %>%  
+  group_by(year) %>% 
+  summarise( 
+    daftar_year = sum(Jumlah.Mhs) 
+  ) 
+```
+```{r} 
+pmbstieyear
+```
+# Visualisasi data STIE pertahun
+```{r}
+ggplot (data=pmbstieyear, mapping=aes(x=year, y=(daftar_year), col=year)) + 
+  geom_line(aes(color  = year)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STIE") +
+  theme_minimal()
+```
+# Jumlah mahasiswa yang daftar perbulan di STIE
+```{r}
+jumdafstie_bln <- pmbstie %>%
+  mutate(bulan = floor_date(Tanggal.Daftar, unit = "month")) %>%
+  group_by(bulan)%>%
+  summarise(
+    daftar_bulan = sum(Jumlah.Mhs)
+  )
+jumdafstie_bln
+```
+#  Visualisasi data STIE perbulan
+```{r}
+ggplot (data=jumdafstie_bln, mapping=aes(x=bulan, y=(daftar_bulan), col=bulan)) + 
+  geom_line(aes(color  = bulan)) +
+  labs(x="Tahun",
+       y="Jumlah Mahasiswa",
+       title="Jumlah Mahasiswa STIE") +
+  theme_minimal()
+```
+# Menghitung jumlah daftar berdasarkan asal sekolah dan nama kota
+```{r}
+countsklh_stie <- group_by (pmbstie, Nama.Sekolah, Nama.Kota)
+count(countsklh_stie)
+```
+# 10 besar asal sekolah yg mendaftar paling banyak dari tahun 2010-2019 - STIE
+```{r}
+pmbstie %>% 
+  group_by(Nama.Kota, Nama.Sekolah) %>% 
+  count() %>%
+  arrange(-n)
+```
+# Untuk melihat sekolah yg paling banyak mendaftar SMA S WIYATA DHARMA
+```{r}
+sklh_stie1 <- pmbstie %>% 
+  filter(Nama.Sekolah == "SMA S WIYATA DHARMA")
+glimpse(sklh_stie1)
+```
+```{r}
+sklh_wiyata <- sklh_stie1 %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+sklh_wiyata
+```
+# Untuk melihat sekolah yg mendaftar masuk 10 besar
+```{r}
+sklh_stie10 <- pmbstie %>% 
+  filter(Nama.Sekolah == "SMA S WIYATA DHARMA"|Nama.Sekolah=="SMA S SUTOMO 1"|Nama.Sekolah=="SMA METHODIST BINJAI"|Nama.Sekolah=="SMA S METHODIST 2"|Nama.Sekolah=="SMA METHODIST LUBUK PAKAM"|Nama.Sekolah=="SMA PANGLIMA POLEM R. PRAPAT"|Nama.Sekolah== "SMA SISINGAMANGARAJA"|Nama.Sekolah== "SMA AHMAD YANI"|Nama.Sekolah=="SMA F. TANDEAN"|Nama.Sekolah== "SMA METHODIST PERBAUNGAN")
+glimpse(sklh_stie10)
+```
+```{r}
+sklh_stie_10 <- sklh_stie10 %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+sklh_stie_10
+```
+
+# Menghitung jumlah.mhs yang mendaftar berdasarkan program studi
+```{r}
+pmbnew %>% 
+  group_by(Program.Studi) %>% 
+  count() %>% 
+  arrange(-n)
+```
+# 1. filter mahasiswa program studi Sistem Informasi (SI)
+```{r}
+prodiSI <- pmbstmik %>% 
+  filter(Program.Studi == "SISTEM INFORMASI (S-1)")
+glimpse(prodiSI)
+```
+```{r}
+head(prodiSI)
+```
+#range tanggal pendaftaran mahasiswa baru
+```{r}
+range(prodiSI$Tanggal.Daftar)
+```
+#tampilkan jumlah mahasiswa program studi Sistem Informasi yang mendaftar perhari
+```{r}
+daily_regisSI <- prodiSI %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+daily_regisSI
+```
+#visualisasi pendaftaran perhari program studi Sistem Informasi
+```{r}
+daily_regisSI %>% 
+  ggplot(aes(x=Tanggal.Daftar, y=jmlDaftar)) +
+  geom_line(color = "blue") +
+  labs(
+  title = "Jumlah Pendaftaran Perhari Sistem Informasi", 
+    x = "Tahun", 
+    y = "Jumlah Daftar" )
+  theme_minimal()
+```
+# 2. filter mahasiswa program studi teknik Informatika (TI)
+```{r}
+prodiTI <- pmbstmik %>% 
+  filter(Program.Studi == "TEKNIK INFORMATIKA (S-1)")
+glimpse(prodiTI)
+```
+```{r}
+head(prodiTI)
+```
+# Range tanggal pendaftaran mahasiswa baru
+```{r}
+range(prodiTI$Tanggal.Daftar)
+```
+# Tampilkan jumlah mahasiswa program studi teknik Informatika yang mendaftar perhari
+```{r}
+daily_regisTI <- prodiTI %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+daily_regisTI
+```
+# Visualisasi pendaftaran perhari program studi teknik Informatika
+```{r}
+daily_regisTI %>% 
+  ggplot(aes(x=Tanggal.Daftar, y=jmlDaftar)) +
+  geom_line(color = "blue") +
+  labs(
+  title = "Jumlah Pendaftaran Perhari Teknik Informatika", 
+    x = "Tahun", 
+    y = "Jumlah Daftar" ) + 
+  theme_minimal()
+```
+# 3. filter mahasiswa program studi Akuntansi 
+```{r}
+prodiAK <- pmbstie %>% 
+  filter(Program.Studi == "AKUNTANSI (S-1)")
+glimpse(prodiAK)
+```
+```{r}
+head(prodiAK)
+```
+# Range tanggal pendaftaran mahasiswa baru
+```{r}
+range(prodiAK$Tanggal.Daftar)
+```
+# Tampilkan jumlah mahasiswa program studi Akuntansi yang mendaftar perhari
+```{r}
+daily_regisAK <- prodiAK %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+daily_regisAK
+```
+# Visualisasi pendaftaran perhari program studi Akuntansi
+```{r}
+daily_regisAK %>% 
+  ggplot(aes(x=Tanggal.Daftar, y=jmlDaftar)) +
+  geom_line(color = "blue") +
+  labs(
+  title = "Jumlah Pendaftaran Perhari Akuntansi", 
+    x = "Tahun", 
+    y = "Jumlah Daftar" )
+  theme_minimal()
+```
+# 4. filter mahasiswa program studi Manajemen
+```{r}
+prodiMA <- pmbstie %>% 
+  filter(Program.Studi == "MANAJEMEN (S-1)")
+glimpse(prodiMA)
+```
+```{r}
+head(prodiMA)
+```
+# Range tanggal pendaftaran mahasiswa baru
+```{r}
+range(prodiMA$Tanggal.Daftar)
+```
+# Tampilkan jumlah mahasiswa program studi Sistem Informasi yang mendaftar perhari
+```{r}
+daily_regisMA <- prodiMA %>% 
+  group_by(Tanggal.Daftar) %>% 
+  summarise(
+    jmlDaftar = sum (Jumlah.Mhs)
+  )
+daily_regisMA
+```
+# Visualisasi pendaftaran perhari program studi Manajemen
+```{r}
+daily_regisMA %>% 
+  ggplot(aes(x=Tanggal.Daftar, y=jmlDaftar)) +
+  geom_line(color = "blue") +
+  labs(
+  title = "Jumlah Pendaftaran Perhari Manajemen", 
+    x = "Tahun", 
+    y = "Jumlah Daftar" )
+  theme_minimal()
+```
+
+
+# Pemodelan menggunkan PROPHET FACEBOOK
+## Fitting `prophet` Time Series 
+# 1. Forecast keseluruhan
+```{r}
+pmb_all <- pmb1%>%
+  rename(
+    ds="Tanggal.Daftar",
+    y= "Jumlah.Mhs" 
+  )
+glimpse(pmb_all)
+```
+# Memodelkan keseluruhan data
+```{r}
+model_all <- prophet() %>%
+  fit.prophet(pmb_all)
+```
+# Periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_all<- make_future_dataframe(model_all, periods = 1825, freq = "day")
+glimpse(future_all)
+```
+# Visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_all <- predict(model_all, future_all)
+plot(model_all, forecast_all)
+```
+# Visualisasi komponen model dan forecast
+```{r}
+prophet_plot_components(model_all, forecast_all)
+```
+# Untuk melihat keterangan nilai dari komponen prophet
+```{r}
+head(forecast_all)
+```
+# Untuk melihat nilai ds, trend, weekly, yearly, yhat
+```{r}
+forecast_all %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+# Untuk membandingkan nilai ds, trend, weekly, yearly, yhat
+```{r}
+forecast_all$trend[1] + forecast_all$weekly[1] + forecast_all$yearly[1] 
+forecast_all$yhat[1]
+```
+# changepoint dengan threshold
+```{r}
+plot(model_all, forecast_all) + 
+  add_changepoints_to_plot(model_all, threshold = 0)
+```
+# changepoint
+```{r}
+plot(model_all, forecast_all) + 
+  add_changepoints_to_plot(model_all)
+```
+# Untuk melihat before dan after forecasting
+```{r}
+before_2019_all <- pmb1 %>% 
+  mutate( 
+    year = year(Tanggal.Daftar) 
+  ) %>% 
+  filter(year < 2019) %>% 
+  rename( 
+    ds = "Tanggal.Daftar", 
+    y = "Jumlah.Mhs" 
+  ) 
+after_2019_all <- pmb1 %>% 
+  mutate( 
+    year = year(Tanggal.Daftar) 
+  ) %>% 
+  filter(year >= 2019) %>% 
+  rename( 
+    ds = "Tanggal.Daftar", 
+    y = "Jumlah.Mhs" 
+  ) 
+ggplot(before_2019_all, aes(x=ds, y=y)) + 
+  geom_point() + 
+  theme_minimal()
+```
+# Hasil
+```{r}
+model_before_2019_all <- prophet(yearly.seasonality = TRUE, 
+                             changepoint.prior.scale = 0.5) %>% 
+fit.prophet(before_2019_all) 
+future_before_2019_all <- make_future_dataframe(model_before_2019_all, periods = 365) 
+forecaset_before_2019_all <- predict(model_before_2019_all, future_before_2019_all) 
+plot(model_before_2019_all, forecaset_before_2019_all) + 
+  add_changepoints_to_plot(model_before_2019_all) + 
+  geom_point(data = after_2019_all, aes(x = as.POSIXct(ds), y=y), color = "tomato3")
+```
+# Melihat tren dengan liner model
+```{r}
+pmb1 %>% 
+  ggplot(aes(x=Tanggal.Daftar, y=Jumlah.Mhs)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") 
+```
+# Non Reguler Seasionality
+```{r}
+model_all_monthly <- prophet(changepoint.prior.scale = 0.05, 
+                    yearly.seasonality = TRUE) %>% 
+  add_seasonality(name = "monthly", period = 30,5, fourier.order = 5) %>% 
+  fit.prophet(pmb_all) 
+future_all_monthly <- make_future_dataframe(model_all_monthly, periods = 730) 
+forecast_all_monthly <- predict(model_all_monthly, future_all_monthly) 
+prophet_plot_components(model_all_monthly, forecast_all_monthly) 
+```
+# Model yang mengakomodasi efek musiman mingguan, bulanan dan tahunan
+```{r}
+model_all_monthly <- prophet(changepoint.prior.scale = 0.05, 
+                    yearly.seasonality = TRUE) %>% 
+  add_seasonality(name = "monthly", period = 30.5, fourier.order = 5) %>% 
+  fit.prophet(pmb_all) 
+future_all_monthly <- make_future_dataframe(model_all_monthly, periods = 365) 
+forecast_all_monthly <- predict(model_all_monthly, future_all_monthly) 
+plot(model_all_monthly, forecast_all_monthly) 
+```
+# Model forecast evaluation
+Tujuannya cukup jelas, adalah untuk memperoleh gambaran sekilas tentang jenis kesalahan apa yang akan kita harapkan untuk model tersebut. Sekarang mari kita lakukan pemisahan sekali lagi, ingat bahwa data kita memiliki rentang dari awal 2010 hingga akhir 2019. Katakanlah, saya akan menyimpan catatan 2019 sebagai data pengujian dan menggunakan sisanya untuk pelatihan model:
+```{r}
+cutoff <- dmy("01-06-2019") 
+train_all <- pmb1 %>% 
+  filter( 
+    Tanggal.Daftar < cutoff 
+  ) %>% 
+  rename( 
+    "ds" = Tanggal.Daftar, 
+    "y" = Jumlah.Mhs 
+  ) 
+test_all <- pmb1 %>% 
+  filter( 
+    Tanggal.Daftar >= cutoff 
+  ) %>% 
+  rename( 
+    "ds" = Tanggal.Daftar, 
+    "y" = Jumlah.Mhs 
+  ) 
+ggplot(pmb1, aes(x=Tanggal.Daftar, y=Jumlah.Mhs)) + 
+  geom_point(data = train_all, aes(x=ds, y=y)) + 
+  geom_point(data = test_all, aes(x=ds, y=y), color="tomato3")
+```
+Perhatikan bahwa titik berwarna merah sekarang akan diperlakukan sebagai data yang tidak terlihat dan tidak akan diteruskan ke model. Sekarang mari kita buat model kita menggunakan model yang sebelumnya disetel yang telah kita buat di bagian sebelumnya:
+#Model final
+```{r}
+model_final_all <- prophet(changepoint.prior.scale = 0.05, 
+                       yearly.seasonality = TRUE) %>%
+  fit.prophet(train_all) 
+future_final_all <- make_future_dataframe(model_final_all, periods = nrow(test_all) + 1) 
+forecast_final_all <- predict(model_final_all, future_final_all) 
+plot(model_final_all, forecast_final_all) 
+```
+```{r}
+plot(model_final_all, forecast_final_all) + 
+  geom_point(data = test_all %>% mutate(ds = as.POSIXct(ds)), aes(x=ds, y=y), color="tomato3")
+```
+```{r}
+eval_all <- test_all %>% 
+  mutate( 
+    ds = as.POSIXct(ds) 
+  ) %>% 
+  left_join(forecast_final_all) %>% 
+  select(ds, y, yhat, yhat_upper, yhat_lower) 
+eval_all 
+```
+```{r}
+eval_all %>% 
+  mutate( 
+    flag_extreme = ifelse(y > yhat_upper | y < yhat_lower, "1", "0"), 
+    month = month(ds, label = T), 
+  ) %>% 
+ggplot(aes(x=ds, y=y)) + 
+  geom_ribbon(aes(ymin=yhat_lower, ymax=yhat_upper), alpha = 0.3, fill="dodgerblue4") + 
+  geom_line(aes(x=ds, y=yhat)) + 
+  geom_point(aes(color=flag_extreme), alpha = 0.5, size = 2) + 
+  facet_wrap(~month, scales = "free_x")
+```
+# Menentukan nilai MAPE
+```{r}
+df.cv_all <- cross_validation(model_final_all, initial =365, period = 180, horizon = 365, units = 'days')
+head(df.cv_all)
+```
+```{r}
+tail(df.cv_all)
+```
+```{r}
+df.p_all <- performance_metrics(df.cv_all)
+df.p_all
+```
+```{r}
+mape<- function(y, yhat){
+  return(mean(abs(y-yhat)/y))
+}
+mape(df.cv_all$y,df.cv_all$yhat)
+```
+```{r}
+plot_cross_validation_metric(df.cv_all, metric = 'mape')
+
+```
+bisa dilihat bahwa nilai rata-rata MAPE untuk model peramalam utk 1 tahun berada dibawah 10%, artinya kemampuan model peramalan yang dihasilkan sangat baik
+# Untuk melihat hasil pertahun sebelum prediksi 
+```{r}
+pmbthn <- pmbnew %>% 
+  mutate(year = floor_date(Tanggal.Daftar, unit = "years")) %>%  
+  group_by(year) %>% 
+  summarise( 
+    daftar_mhs = sum(Jumlah.Mhs) 
+  ) 
+pmbthn
+```
+# Untuk melihat hasil prediksi dalam setahun
+```{r}
+pmbyear <- forecast_all %>% 
+  mutate(year = floor_date(ds, unit = "years")) %>%  
+  group_by(year) %>% 
+  summarise( 
+    daftar_mhs = sum(yhat) 
+  ) 
+pmbyear
+```
+# 2. Forecast stmik
+```{r}
+pmb_stmik <- pmbstmik %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="Jumlah.Mhs"
+  )
+glimpse(pmb_stmik)
+```
+# Fitting ke model Prophet
+```{r}
+model_stmik <- prophet() %>%
+  fit.prophet(pmb_stmik)
+```
+# periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_stmik <- make_future_dataframe(model_stmik, periods = 1825, freq = "day")
+glimpse(future_stmik)
+```
+# visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_stmik <- predict(model_stmik, future_stmik)
+plot(model_stmik, forecast_stmik)
+```
+# Komponen plot
+```{r}
+prophet_plot_components(model_stmik, forecast_stmik)
+```
+# untuk melihat keteran nilai dari komponen prophet
+```{r}
+head(forecast_stmik)
+```
+```{r}
+forecast_stmik %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+# changepoint
+```{r}
+plot(model_stmik, forecast_stmik) + 
+  add_changepoints_to_plot(model_stmik, threshold = 0)
+```
+
+# 3. Forecast stie
+```{r}
+pmb_stie <- pmbstie %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="Jumlah.Mhs"
+  )
+glimpse(pmb_stie)
+```
+# Fitting ke model 
+```{r}
+model_stie <- prophet() %>%
+  fit.prophet(pmb_stie)
+```
+# periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_stie <- make_future_dataframe(model_stie, periods = 1825, freq = "day")
+glimpse(future_stie)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_stie <- predict(model_stie, future_stie)
+plot(model_stie, forecast_stie)
+```
+# untuk melihat komponen model dan forecast
+```{r}
+prophet_plot_components(model_stie, forecast_stie)
+```
+# untuk melihat keteran nilai dari komponen prophet
+```{r}
+head(forecast_stie)
+```
+```{r}
+forecast_stie %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+# changepoint
+```{r}
+plot(model_stie, forecast_stie) + 
+  add_changepoints_to_plot(model_stie, threshold = 0)
+```
+
+# 4. Forecast SI
+```{r}
+pmb_SI <- daily_regisSI %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_SI)
+```
+# Fitting ke model
+```{r}
+model_SI <- prophet() %>%
+  fit.prophet(pmb_SI)
+```
+# Periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_SI <- make_future_dataframe(model_SI, periods = 1825, freq = "day")
+glimpse(future_SI)
+```
+# Visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_SI <- predict(model_SI, future_SI)
+plot(model_SI, forecast_SI)
+```
+# Komponen plot
+```{r}
+prophet_plot_components(model_SI, forecast_SI)
+```
+```{r}
+head(forecast_SI)
+```
+```{r}
+forecast_SI %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_SI$trend[1] + forecast_SI$weekly[1] + forecast_SI$yearly[1] 
+forecast_SI$yhat[1]
+```
+```{r}
+plot(model_SI, forecast_SI) + 
+  add_changepoints_to_plot(model_SI, threshold = 0)
+```
+
+# 5. Forecast TI
+```{r}
+pmb_TI <- daily_regisTI %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_TI)
+```
+# Fitting ke model
+```{r}
+model_TI <- prophet() %>%
+  fit.prophet(pmb_TI)
+```
+#periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_TI <- make_future_dataframe(model_TI, periods = 1825, freq = "day")
+glimpse(future_TI)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_TI <- predict(model_TI, future_TI)
+plot(model_TI, forecast_TI)
+```
+# Komponen Plot
+```{r}
+prophet_plot_components(model_TI, forecast_TI)
+```
+# nilai hasil
+```{r}
+head(forecast_TI)
+```
+```{r}
+forecast_TI %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_TI$trend[1] + forecast_TI$weekly[1] + forecast_TI$yearly[1] 
+forecast_TI$yhat[1]
+```
+```{r}
+plot(model_TI, forecast_TI) + 
+  add_changepoints_to_plot(model_TI, threshold = 0)
+```
+
+# 6. Forecast AK
+```{r}
+pmb_AK <- daily_regisAK %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_AK)
+```
+# Fitting ke model
+```{r}
+model_AK <- prophet() %>%
+  fit.prophet(pmb_AK)
+```
+# periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_AK <- make_future_dataframe(model_AK, periods = 1825, freq = "day")
+glimpse(future_AK)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_AK <- predict(model_AK, future_AK)
+plot(model_AK, forecast_AK)
+```
+# Komponen pot
+```{r}
+prophet_plot_components(model_AK, forecast_AK)
+```
+# Nilai hasil
+```{r}
+head(forecast_AK)
+```
+```{r}
+forecast_AK %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_AK$trend[1] + forecast_AK$weekly[1] + forecast_AK$yearly[1] 
+forecast_AK$yhat[1]
+```
+# changepoint
+```{r}
+plot(model_AK, forecast_AK) + 
+  add_changepoints_to_plot(model_AK, threshold = 0)
+```
+
+# 7. Forecast MA
+```{r}
+pmb_MA<- daily_regisMA %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_MA)
+```
+# Fitting ke model
+```{r}
+model_MA <- prophet() %>%
+  fit.prophet(pmb_MA)
+```
+# periode prediksi untuk 5 tahun kedepan (10 x 365 hari)
+```{r}
+future_MA <- make_future_dataframe(model_MA, periods = 3650, freq = "day")
+glimpse(future_MA)
+```
+# visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_MA<- predict(model_MA, future_MA)
+plot(model_MA, forecast_MA)
+```
+# Komponen plot
+```{r}
+prophet_plot_components(model_MA, forecast_MA)
+```
+# Nilai hasil
+```{r}
+head(forecast_MA)
+```
+```{r}
+forecast_MA %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_MA$trend[1] + forecast_MA$weekly[1] + forecast_MA$yearly[1] 
+forecast_MA$yhat[1]
+```
+# Changepoint
+```{r}
+plot(model_MA, forecast_MA) + 
+  add_changepoints_to_plot(model_MA, threshold = 0)
+```
+
+# 8. Forecast sekolah Sutomo
+```{r}
+pmb_sutomo <- sklh_sutomo %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_sutomo)
+```
+# Fitting ke model
+```{r}
+model_sutomo <- prophet() %>%
+  fit.prophet(pmb_sutomo)
+```
+#periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_sutomo<- make_future_dataframe(model_sutomo, periods = 1825, freq = "day")
+glimpse(future_sutomo)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_sutomo<- predict(model_sutomo, future_sutomo)
+plot(model_sutomo, forecast_sutomo)
+```
+# Komponen plot
+```{r}
+prophet_plot_components(model_sutomo, forecast_sutomo)
+```
+# Nilai hasil
+```{r}
+head(forecast_sutomo)
+```
+```{r}
+forecast_sutomo %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_sutomo$trend[1] + forecast_sutomo$weekly[1] + forecast_sutomo$yearly[1] 
+forecast_sutomo$yhat[1]
+```
+```{r}
+plot(model_sutomo, forecast_sutomo) + 
+  add_changepoints_to_plot(model_sutomo, threshold = 0)
+```
+
+# 9. Forecast sekolah 10 besar STMIK
+```{r}
+stmik_10<- sklh_stmik_10 %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(stmik_10)
+```
+# Fitting ke model
+```{r}
+model_stmik_10 <- prophet() %>%
+  fit.prophet(stmik_10)
+```
+#periode prediksi untuk 5 tahun kedepan (10 x 365 hari)
+```{r}
+future_stmik_10 <- make_future_dataframe(model_stmik_10, periods = 1825, freq = "day")
+glimpse(future_stmik_10)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_stmik_10<- predict(model_stmik_10, future_stmik_10)
+plot(model_stmik_10, forecast_stmik_10)
+```
+# Komponen Plot
+```{r}
+prophet_plot_components(model_stmik_10, forecast_stmik_10)
+```
+# nilai hasil
+```{r}
+head(forecast_stmik_10)
+```
+```{r}
+forecast_stmik_10 %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_stmik_10$trend[1] + forecast_stmik_10$weekly[1] + forecast_stmik_10$yearly[1] 
+forecast_stmik_10$yhat[1]
+```
+# changepoint
+```{r}
+plot(model_stmik_10, forecast_stmik_10) + 
+  add_changepoints_to_plot(model_stmik_10, threshold = 0)
+```
+
+# 10. Forecast Wiyata
+```{r}
+pmb_wiyata <- sklh_wiyata %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(pmb_wiyata)
+```
+# Fitting ke model
+```{r}
+model_wiyata <- prophet() %>%
+  fit.prophet(pmb_wiyata)
+```
+#periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_wiyata <- make_future_dataframe(model_wiyata, periods = 1825, freq = "day")
+glimpse(future_wiyata)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_wiyata <- predict(model_wiyata, future_wiyata)
+plot(model_wiyata, forecast_wiyata)
+```
+# Komponen plot
+```{r}
+prophet_plot_components(model_wiyata, forecast_wiyata)
+```
+# nilai hasil
+```{r}
+head(forecast_wiyata)
+```
+```{r}
+forecast_wiyata %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_wiyata$trend[1] + forecast_wiyata$weekly[1] + forecast_wiyata$yearly[1] 
+forecast_sutomo$yhat[1]
+```
+# Changepoint
+```{r}
+plot(model_wiyata, forecast_wiyata) + 
+  add_changepoints_to_plot(model_wiyata, threshold = 0)
+```
+
+# 11. Forecast sekolah 10 besar stie
+```{r}
+stie_10 <- sklh_stie_10 %>%
+  rename(
+    ds="Tanggal.Daftar",
+    y="jmlDaftar"
+  )
+glimpse(stie_10)
+```
+# Fitting ke model
+```{r}
+model_stie_10 <- prophet() %>%
+  fit.prophet(stie_10)
+```
+#periode prediksi untuk 5 tahun kedepan (5 x 365 hari)
+```{r}
+future_stie_10<- make_future_dataframe(model_stie_10, periods = 1825, freq = "day")
+glimpse(future_stie_10)
+```
+#visualisasi hasil peralaman untuk 5 tahun kedepan
+```{r}
+forecast_stie_10 <- predict(model_stie_10, future_stie_10)
+plot(model_stie_10, forecast_stie_10)
+```
+# komponen plot
+```{r}
+prophet_plot_components(model_stie_10, forecast_stie_10)
+```
+# nilai hasil
+```{r}
+head(forecast_stie_10)
+```
+```{r}
+forecast_stie_10 %>%
+  select(ds, trend, weekly, yearly, yhat)
+```
+```{r}
+forecast_stie_10$trend[1] + forecast_stie_10$weekly[1] + forecast_stie_10$yearly[1] 
+forecast_stie_10$yhat[1]
+```
+# changepoint
+```{r}
+plot(model_stie_10, forecast_stie_10) + 
+  add_changepoints_to_plot(model_stie_10, threshold = 0)
+```
